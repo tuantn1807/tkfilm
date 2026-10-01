@@ -6,7 +6,7 @@ import {
   TestIds,
 } from "react-native-google-mobile-ads";
 
-const adUnitId = "ca-app-pub-8019668572026687/9659893435";
+const adUnitId = __DEV__ ? TestIds.BANNER : "ca-app-pub-8019668572026687/9659893435";
 
 export default function AdBanner() {
   return (

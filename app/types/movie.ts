@@ -1,6 +1,7 @@
 export interface Movie {
     id: string | number;
     movie_id?: number;
+    vip_movie?: boolean;
 
     title: string;
     genres: string[];

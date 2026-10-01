@@ -51,7 +51,7 @@ from cold_start_recommender import (
     HybridRecommender
 )
 from movie_manager import MovieManager
-
+from vnpay import vnpay_bp
 logger = logging.getLogger(__name__)
 
 # BASE_DIR defined at the top
@@ -87,7 +87,6 @@ GENRE_COLUMNS = [
 
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
-
 # Apply CORS if available; this allows the React Native/web frontend to contact the Flask API
 if CORS is not None:
     CORS(app)
@@ -95,6 +94,7 @@ else:
     # If Flask-Cors is not installed the server will still work for same-origin calls
     print("Warning: flask_cors not installed; cross-origin requests may fail.\nInstall with: pip install Flask-Cors")
 
+app.register_blueprint(vnpay_bp, url_prefix='/api/vnpay')
 
 @app.get("/api/movies/top_rated")
 def api_movies_top_rated():
@@ -2277,7 +2277,7 @@ def api_admin_add_movie():
 
         # 2. Gọi webhook n8n
         requests.post(
-            "http://10.99.76.190:5678/webhook-test/8904cc6d-ed98-4759-bd81-6341a005461a",
+            "http://localhost:5678/webhook-test/8904cc6d-ed98-4759-bd81-6341a005461a",
             headers={
                 "Content-Type": "application/json"
             },

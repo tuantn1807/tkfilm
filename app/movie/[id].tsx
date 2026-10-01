@@ -53,7 +53,7 @@ export default function MovieDetailScreen() {
     const [commentsLoading, setCommentsLoading] = useState(true);
     const [newCommentText, setNewCommentText] = useState("");
     const [commentSubmitting, setCommentSubmitting] = useState(false);
-    const [currentUser, setCurrentUser] = useState<{ id: string; name: string } | null>(null);
+    const [currentUser, setCurrentUser] = useState<{ id: string; name: string; vip_user?: boolean; vip_expired_at?: string | null } | null>(null);
 
     const loadData = useCallback(async () => {
         if (!id) return;
@@ -128,7 +128,7 @@ export default function MovieDetailScreen() {
             if (userUuid) {
                 const { data: profile, error } = await supabase
                     .from('profile')
-                    .select('name')
+                    .select('name, vip_user, vip_expired_at')
                     .eq('id', userUuid)
                     .single();
                 
@@ -139,6 +139,8 @@ export default function MovieDetailScreen() {
                 setCurrentUser({
                     id: userUuid,
                     name: profile?.name || 'Người dùng ẩn danh',
+                    vip_user: profile?.vip_user || false,
+                    vip_expired_at: profile?.vip_expired_at || null,
                 });
             } else {
                 setCurrentUser(null);
@@ -298,7 +300,92 @@ export default function MovieDetailScreen() {
         }
     };
 
+    const checkVipAccess = async (): Promise<boolean> => {
+        // 1. Kiểm tra cột vip_movie của phim trực tiếp từ Supabase
+        let isVipMovie = false;
+        if (isTmdb !== 'true' && id) {
+            try {
+                const { data: dbMovie } = await supabase
+                    .from('movie')
+                    .select('vip_movie')
+                    .eq('movie_id', parseInt(id))
+                    .maybeSingle();
+
+                if (dbMovie) {
+                    isVipMovie = dbMovie.vip_movie || false;
+                }
+            } catch (e) {
+                console.error("Lỗi truy vấn vip_movie:", e);
+            }
+        }
+
+        // Nếu phim không phải phim VIP, cho xem bình thường
+        if (!isVipMovie) {
+            return true;
+        }
+
+        // 2. Phim là VIP nhưng chưa đăng nhập
+        if (!currentUser) {
+            Alert.alert("Yêu cầu VIP 🌟", "Phim này chỉ dành cho thành viên VIP. Vui lòng đăng nhập.");
+            router.push('/log-in');
+            return false;
+        }
+
+        try {
+            // 3. Lấy trực tiếp thông tin VIP mới nhất từ Database để đảm bảo tính chính xác
+            const { data: profile, error } = await supabase
+                .from('profile')
+                .select('vip_user, vip_expired_at')
+                .eq('id', currentUser.id)
+                .single();
+
+            if (error || !profile) {
+                Alert.alert("Lỗi", "Không thể kiểm tra thông tin tài khoản của bạn.");
+                return false;
+            }
+
+            const isVip = profile.vip_user || false;
+            const expiredAt = profile.vip_expired_at ? new Date(profile.vip_expired_at) : null;
+
+            // 4. Nếu là VIP và VIP vẫn còn hạn sử dụng
+            if (isVip && expiredAt && expiredAt > new Date()) {
+                return true; 
+            }
+
+            // 5. Nếu vip_user đang là true nhưng ngày hết hạn đã quá hạn
+            if (isVip) {
+                // Tự động chuyển đổi vip_user thành false trên database
+                await supabase
+                    .from('profile')
+                    .update({ vip_user: false })
+                    .eq('id', currentUser.id);
+
+                // Cập nhật lại UI state để ẩn các tính năng VIP
+                setCurrentUser(prev => prev ? { ...prev, vip_user: false, vip_expired_at: null } : null);
+            }
+
+            // 6. Báo hết hạn và đưa ra lựa chọn mua VIP
+            Alert.alert(
+                "VIP đã hết hạn hoặc chưa đăng ký 🌟",
+                "Phim này chỉ dành cho tài khoản VIP. Thời hạn VIP của bạn đã hết hoặc bạn chưa mua gói VIP. Vui lòng nâng cấp tài khoản để tiếp tục xem.",
+                [
+                    { text: "Để sau", style: "cancel" },
+                    { text: "Nâng cấp VIP ngay", onPress: () => router.push('/profile' as any) }
+                ]
+            );
+            return false;
+        } catch (e) {
+            console.error("Lỗi kiểm tra VIP:", e);
+            Alert.alert("Lỗi", "Có lỗi xảy ra khi xác thực quyền VIP của bạn.");
+            return false;
+        }
+    };
+
     const handleWatchFullMovie = async () => {
+        // Kiểm tra quyền xem phim VIP trước khi xem phim
+        const hasAccess = await checkVipAccess();
+        if (!hasAccess) return;
+
         if (!movie?.title) {
             Alert.alert("Lỗi", "Không thể lấy tên phim.");
             return;

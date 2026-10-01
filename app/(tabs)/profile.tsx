@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+// Sửa dòng 4 thành:
+import { ActivityIndicator, Alert, FlatList, Image, StyleSheet, Text, TouchableOpacity, View, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../service/api';
 import { supabase } from '../../supabase';
@@ -13,7 +14,10 @@ export default function ProfileScreen() {
     const router = useRouter();
     const { sessionId, resetSession } = useUserPreference();
     const [profileName, setProfileName] = useState<string | null>(null);
+    const [profileRole, setProfileRole] = useState<string | null>(null);
     const [profileEmail, setProfileEmail] = useState<string | null>(null);
+    const [vipUser, setVipUser] = useState<boolean>(false);
+    const [vipExpiredAt, setVipExpiredAt] = useState<string | null>(null);
     const [ratedMovies, setRatedMovies] = useState<any[]>([]);
     const [watchHistory, setWatchHistory] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -85,23 +89,33 @@ export default function ProfileScreen() {
         }
     };
 
-    const loadProfile = async () => {
-        try {
-            const { data: sessionData } = await supabase.auth.getSession();
-            const userId = sessionData?.session?.user?.id;
-            if (!userId) return;
+const loadProfile = async () => {
+    try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const userId = sessionData?.session?.user?.id;
+        if (!userId) return;
 
-            const { data, error } = await supabase.from('profile').select('name, email').eq('id', userId).single();
-            if (error) {
-                console.error('Failed to load profile:', error);
-                return;
-            }
-            setProfileName(data?.name || null);
-            setProfileEmail(data?.email || null);
-        } catch (e) {
-            console.error('Error fetching profile:', e);
+        // Chọn thêm các cột 'role', 'vip_user', 'vip_expired_at' từ bảng profile
+        const { data, error } = await supabase
+            .from('profile')
+            .select('name, email, role, vip_user, vip_expired_at')
+            .eq('id', userId)
+            .single();
+            
+        if (error) {
+            console.error('Failed to load profile:', error);
+            return;
         }
-    };
+        setProfileName(data?.name || null);
+        setProfileEmail(data?.email || null);
+        setProfileRole(data?.role || null);
+        setVipUser(data?.vip_user || false);
+        setVipExpiredAt(data?.vip_expired_at || null);
+    } catch (e) {
+        console.error('Error fetching profile:', e);
+    }
+};
+
 
     const loadWatchHistory = async () => {
         try {
@@ -156,6 +170,47 @@ export default function ProfileScreen() {
         }
     };
 
+        useEffect(() => {
+        // Hàm xử lý khi bắt được Deep Link trả về kết quả thanh toán
+        const handleDeepLink = (event: { url: string }) => {
+            const url = event.url;
+            console.debug('[PROFILE] Nhận Deep Link:', url);
+            
+            if (url.includes('payment-result')) {
+                if (url.includes('status=success')) {
+                    Alert.alert(
+                        'Thành công 🎉',
+                        'Tài khoản của bạn đã được nâng cấp lên VIP Premium!',
+                        [
+                            {
+                                text: 'Xem phim ngay 🎬',
+                                onPress: () => {
+                                    router.replace('/' as any); // Chuyển hướng về Trang chủ
+                                }
+                            }
+                        ]
+                    );
+                    loadProfile(); // Tải lại profile để cập nhật huy hiệu VIP màu vàng
+                } else {
+                    Alert.alert('Thất bại ❌', 'Giao dịch thanh toán không thành công hoặc đã bị hủy.');
+                }
+            }
+        };
+
+        // Đăng ký bộ lắng nghe sự kiện Deep Link
+        const subscription = Linking.addEventListener('url', handleDeepLink);
+
+        // Trường hợp app đang bị tắt hoàn toàn và được mở lên thông qua Deep Link
+        Linking.getInitialURL().then((url) => {
+            if (url) handleDeepLink({ url });
+        });
+
+        return () => {
+            subscription.remove(); // Hủy đăng ký khi thoát màn hình
+        };
+    }, []);
+
+
     useFocusEffect(
         useCallback(() => {
             loadAllData();
@@ -207,6 +262,30 @@ export default function ProfileScreen() {
         );
     };
 
+        const handleUpgradePremium = async (amount: number, packageType: string) => {
+        try {
+            setLoading(true);
+            // 1. Tạo mã đơn hàng duy nhất bằng cách ghép chuỗi thời gian
+            const orderId = `VIP_${Date.now()}`;
+
+            // 2. Gọi Edge Function qua helper API
+            const response = await api.createVnpayPayment(amount, orderId, packageType);
+
+            if (response && response.status === 'success' && response.payment_url) {
+                // 3. Mở URL thanh toán VNPay bằng trình duyệt mặc định của điện thoại
+                Linking.openURL(response.payment_url);
+            } else {
+                Alert.alert('Lỗi', response?.message || 'Không thể tạo link thanh toán vào lúc này.');
+            }
+        } catch (error: any) {
+            console.error('Lỗi nâng cấp Premium:', error);
+            Alert.alert('Lỗi', error.message || 'Đã xảy ra lỗi kết nối thanh toán.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+
     const renderGenres = (item: any) => {
         const genres = item.genres || (item.tmdb?.genres ? item.tmdb.genres.map((g: any) => typeof g === 'string' ? g : g.name) : []);
         return genres.length > 0 ? genres.slice(0, 3).join(' • ') : 'Không rõ thể loại';
@@ -247,8 +326,49 @@ export default function ProfileScreen() {
                 </View>
                 <Text style={styles.username}>{profileName || profileEmail || 'Người dùng ẩn danh'}</Text>
                 {profileEmail ? <Text style={styles.emailText}>{profileEmail}</Text> : null}
-                <Text style={styles.sessionId}>ID: {sessionId.substring(0, 8)}...</Text>
+{vipUser && vipExpiredAt ? (
+    <View style={styles.premiumBadge}>
+        <Ionicons name="star" size={14} color="#FFD700" style={{ marginRight: 4 }} />
+        <Text style={styles.premiumText}>
+            VIP PREMIUM (Hạn: {new Date(vipExpiredAt).toLocaleDateString('vi-VN')})
+        </Text>
+    </View>
+) : null}
 
+                <Text style={styles.sessionId}>ID: {sessionId.substring(0, 8)}...</Text>
+    <View style={styles.upgradeSection}>
+        <Text style={styles.upgradeTitle}>
+            {vipUser ? "Gia hạn thêm gói VIP 🌟" : "Nâng cấp tài khoản VIP"}
+        </Text>
+        <View style={styles.packagesContainer}>
+            <TouchableOpacity 
+                style={styles.packageCard} 
+                onPress={() => handleUpgradePremium(50000, '1_month')}
+            >
+                <Text style={styles.packageDuration}>1 Tháng</Text>
+                <Text style={styles.packagePrice}>50k</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+                style={[styles.packageCard, styles.popularPackage]} 
+                onPress={() => handleUpgradePremium(250000, '6_months')}
+            >
+                <View style={styles.hotBadge}>
+                    <Text style={styles.hotText}>HOT</Text>
+                </View>
+                <Text style={[styles.packageDuration, { color: '#FFF' }]}>6 Tháng</Text>
+                <Text style={[styles.packagePrice, { color: '#FFD700' }]}>250k</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+                style={styles.packageCard} 
+                onPress={() => handleUpgradePremium(450000, '1_year')}
+            >
+                <Text style={styles.packageDuration}>1 Năm</Text>
+                <Text style={styles.packagePrice}>450k</Text>
+            </TouchableOpacity>
+        </View>
+    </View>
                 <TouchableOpacity style={styles.resetButton} onPress={handleReset}>
                     <Text style={styles.resetText}>Xóa dữ liệu & Reset</Text>
                 </TouchableOpacity>
@@ -504,5 +624,78 @@ const styles = StyleSheet.create({
     emptyText: {
         color: '#999',
         fontSize: 16,
-    }
+    },
+    premiumBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255, 215, 0, 0.15)',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#FFD700',
+        marginTop: 8,
+    },
+    premiumText: {
+        color: '#FFD700',
+        fontSize: 12,
+        fontWeight: 'bold',
+    },
+    upgradeSection: {
+        width: '100%',
+        marginTop: 20,
+        alignItems: 'center',
+    },
+    upgradeTitle: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#D4AF37', // Gold
+        marginBottom: 12,
+    },
+    packagesContainer: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        width: '100%',
+        paddingHorizontal: 5,
+    },
+    packageCard: {
+        flex: 1,
+        backgroundColor: '#222',
+        paddingVertical: 15,
+        marginHorizontal: 5,
+        borderRadius: 12,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#333',
+    },
+    popularPackage: {
+        borderColor: '#D4AF37',
+        backgroundColor: '#2a220f', // slight golden tint
+        position: 'relative',
+    },
+    packageDuration: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#aaa',
+        marginBottom: 4,
+    },
+    packagePrice: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#FFF',
+    },
+    hotBadge: {
+        position: 'absolute',
+        top: -10,
+        backgroundColor: '#E50914', // Red badge
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 8,
+    },
+    hotText: {
+        color: '#FFF',
+        fontSize: 10,
+        fontWeight: 'bold',
+    },
+
 });

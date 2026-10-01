@@ -1,4 +1,3 @@
-
 import { Platform } from 'react-native';
 import { supabase } from '../../supabase';
 
@@ -8,12 +7,12 @@ import { supabase } from '../../supabase';
 // For emulator: Use 10.0.2.2 (Android) or localhost (iOS)
 // For physical device, set EXPO_PUBLIC_BACKEND_URL to your machine IP (for example: http://192.168.88.154:5000)
 const DEFAULT_BACKEND_URL = Platform.select({
-    android: 'http://localhost:5000',
+    android: 'http://172.22.171.190:5000',
     ios: 'http://127.0.0.1:5000',
     default: 'http://127.0.0.1:5000',
 });
 
-export const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL ?? DEFAULT_BACKEND_URL ?? 'http://127.0.0.1:5000';
+export const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL ?? DEFAULT_BACKEND_URL ?? 'http://172.22.171.190:5000';
 
 // ============================================================================
 
@@ -165,69 +164,69 @@ export const api = {
                     console.warn('[API] Skipping Supabase rating sync for non-MovieLens movie id', { movieId });
                 } else {
 
-                const { data: existing, error: selectError } = await supabase
-                    .from('rating')
-                    .select('id,user_uuid,user_id,item_id,rating')
-                    .eq('user_uuid', userId)
-                    .eq('item_id', movieId)
-                    .limit(1)
-                    .single();
-
-                if (selectError && selectError.code !== 'PGRST116') {
-                    console.error('Supabase lookup rating error:', selectError);
-                }
-
-                if (existing?.id) {
-                    const { error: updateError } = await supabase
+                    const { data: existing, error: selectError } = await supabase
                         .from('rating')
-                        .update({ rating: rating })
-                        .eq('id', existing.id);
+                        .select('id,user_uuid,user_id,item_id,rating')
+                        .eq('user_uuid', userId)
+                        .eq('item_id', movieId)
+                        .limit(1)
+                        .single();
 
-                    if (updateError) {
-                        console.error('Supabase update rating error:', updateError);
-                    } else {
-                        console.debug('[API] Updated existing rating row', { id: existing.id });
+                    if (selectError && selectError.code !== 'PGRST116') {
+                        console.error('Supabase lookup rating error:', selectError);
                     }
-                } else {
-                    let { error: insertError } = await supabase
-                        .from('rating')
-                        .insert([{ user_uuid: userId, item_id: movieId, rating: rating }]);
 
-                    if (insertError) {
-                        console.error('Supabase insert rating error:', insertError);
+                    if (existing?.id) {
+                        const { error: updateError } = await supabase
+                            .from('rating')
+                            .update({ rating: rating })
+                            .eq('id', existing.id);
 
-                        // If foreign key constraint fails because the movie row is missing,
-                        // attempt to insert a minimal movie row and retry once.
-                        try {
-                            if (insertError.code === '23503') {
-                                console.debug('[API] Detected missing movie FK, attempting to insert minimal movie row', { movieId });
-
-                                // Try to insert a minimal movie record into `movie` table to satisfy FK.
-                                const minimalMovie = { movie_id: movieId, movie_title: `ML ${movieId}` };
-                                const { error: movieInsertError } = await supabase.from('movie').insert([minimalMovie]);
-                                if (movieInsertError) {
-                                    console.error('Supabase insert minimal movie error:', movieInsertError);
-                                } else {
-                                    console.debug('[API] Inserted minimal movie row', { movieId });
-                                    // Retry rating insert once
-                                    const { error: retryError } = await supabase
-                                        .from('rating')
-                                        .insert([{ user_uuid: userId, item_id: movieId, rating: rating }]);
-                                    if (retryError) {
-                                        console.error('Supabase retry insert rating error:', retryError);
-                                    } else {
-                                        console.debug('[API] Inserted new rating row after inserting minimal movie', { movieId, rating });
-                                        insertError = null;
-                                    }
-                                }
-                            }
-                        } catch (e: any) {
-                            console.error('Error handling FK insert failure:', e);
+                        if (updateError) {
+                            console.error('Supabase update rating error:', updateError);
+                        } else {
+                            console.debug('[API] Updated existing rating row', { id: existing.id });
                         }
                     } else {
-                        console.debug('[API] Inserted new rating row', { movieId, rating });
+                        let { error: insertError } = await supabase
+                            .from('rating')
+                            .insert([{ user_uuid: userId, item_id: movieId, rating: rating }]);
+
+                        if (insertError) {
+                            console.error('Supabase insert rating error:', insertError);
+
+                            // If foreign key constraint fails because the movie row is missing,
+                            // attempt to insert a minimal movie row and retry once.
+                            try {
+                                if (insertError.code === '23503') {
+                                    console.debug('[API] Detected missing movie FK, attempting to insert minimal movie row', { movieId });
+
+                                    // Try to insert a minimal movie record into `movie` table to satisfy FK.
+                                    const minimalMovie = { movie_id: movieId, movie_title: `ML ${movieId}` };
+                                    const { error: movieInsertError } = await supabase.from('movie').insert([minimalMovie]);
+                                    if (movieInsertError) {
+                                        console.error('Supabase insert minimal movie error:', movieInsertError);
+                                    } else {
+                                        console.debug('[API] Inserted minimal movie row', { movieId });
+                                        // Retry rating insert once
+                                        const { error: retryError } = await supabase
+                                            .from('rating')
+                                            .insert([{ user_uuid: userId, item_id: movieId, rating: rating }]);
+                                        if (retryError) {
+                                            console.error('Supabase retry insert rating error:', retryError);
+                                        } else {
+                                            console.debug('[API] Inserted new rating row after inserting minimal movie', { movieId, rating });
+                                            insertError = null;
+                                        }
+                                    }
+                                }
+                            } catch (e: any) {
+                                console.error('Error handling FK insert failure:', e);
+                            }
+                        } else {
+                            console.debug('[API] Inserted new rating row', { movieId, rating });
+                        }
                     }
-                }
                 }
             }
 
@@ -441,7 +440,7 @@ export const api = {
             }
 
             const userId = sessionData.session.user.id;
-            
+
             // Upsert: nếu đã xem phim này rồi, cập nhật thời gian; nếu chưa, thêm mới
             const { error } = await supabase
                 .from('watch_history')
@@ -476,7 +475,7 @@ export const api = {
             }
 
             const userId = sessionData.session.user.id;
-            
+
             const { data, error } = await supabase
                 .from('watch_history')
                 .select('movie_id, watched_at')
@@ -616,6 +615,41 @@ export const api = {
             console.error('API Error deleteMovieComment:', e);
             return { success: false, error: e?.message || 'Có lỗi xảy ra' };
         }
+    },
+
+    createVnpayPayment: async (amount: number, orderId: string, packageType: string) => {
+        try {
+            const { data: sessionData } = await supabase.auth.getSession();
+            const userId = sessionData?.session?.user?.id;
+
+            if (!userId) {
+                console.warn('[API] Chưa đăng nhập tài khoản');
+                return { status: 'error', message: 'Vui lòng đăng nhập để thanh toán' };
+            }
+
+            console.debug('[API] Gọi Edge Function vnpay', { amount, orderId, userId, packageType });
+
+            const { data, error } = await supabase.functions.invoke('vnpay', {
+                body: {
+                    amount: amount,
+                    order_id: orderId,
+                    user_id: userId,
+                    package_type: packageType
+                }
+            });
+
+            if (error) {
+                console.error('[API] Lỗi gọi Edge Function:', error);
+                return { status: 'error', message: error.message };
+            }
+
+            // IN URL RA TERMINAL METRO BUNDLER ĐỂ KIỂM TRA
+            console.log("=== URL THANH TOÁN sinh ra là ===", data?.payment_url);
+
+            return data;
+        } catch (e: any) {
+            console.error('[API] Lỗi bất ngờ createVnpayPayment:', e);
+            return { status: 'error', message: e?.message || 'Có lỗi xảy ra' };
+        }
     }
 };
-

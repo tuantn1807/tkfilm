@@ -4,34 +4,54 @@ import React, { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { supabase } from '../supabase';
 
+const withTimeout = async <T,>(promise: Promise<T>, ms: number, fallback: T): Promise<T> => {
+    return Promise.race([
+        promise,
+        new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+    ]);
+};
+
 export default function SplashScreen() {
     const router = useRouter();
 
     useEffect(() => {
         const checkStatus = async () => {
             try {
-                // Kiểm tra session Supabase trước
-                const { data: { session } } = await supabase.auth.getSession();
+                console.log('[Splash] checking auth session...');
+                const sessionResult = await withTimeout(
+                    supabase.auth.getSession(),
+                    5000,
+                    { data: { session: null }, error: null }
+                );
+
+                const session = sessionResult?.data?.session ?? null;
+                console.log('[Splash] session found:', !!session);
+
                 if (!session) {
+                    console.log('[Splash] no session -> login');
                     router.replace('/log-in' as any);
                     return;
                 }
 
-                // Giả lập delay một chút cho đẹp splash
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                await new Promise((resolve) => setTimeout(resolve, 1000));
 
-                const { data: profile, error: profileError } = await supabase
-                    .from('profile')
-                    .select('is_locked')
-                    .eq('id', session.user.id)
-                    .single();
+                const profileResult = await withTimeout(
+                    supabase
+                        .from('profile')
+                        .select('is_locked')
+                        .eq('id', session.user.id)
+                        .single(),
+                    5000,
+                    { data: null, error: { message: 'profile fetch timeout' } }
+                );
 
-                if (profileError) {
-                    console.error('Không thể lấy trạng thái profile:', profileError);
+                if (profileResult.error) {
+                    console.error('Không thể lấy trạng thái profile:', profileResult.error);
                     router.replace('/(tabs)');
                     return;
                 }
 
+                const profile = profileResult.data as { is_locked?: boolean } | null;
                 if (profile?.is_locked === false) {
                     router.replace('/onboarding');
                 } else {
@@ -39,7 +59,6 @@ export default function SplashScreen() {
                 }
             } catch (error) {
                 console.error('Splash check failed:', error);
-                // Fallback mặc định
                 router.replace('/log-in' as any);
             }
         };
